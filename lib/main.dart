@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -110,14 +108,37 @@ class WebAppScreen extends StatefulWidget {
 
 class _WebAppScreenState extends State<WebAppScreen>
     with WidgetsBindingObserver {
-  final Completer<WebViewController> _controller =
-      Completer<WebViewController>();
+  late final WebViewController _controller;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.black)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (_) {
+            if (!_isLoading && mounted) {
+              setState(() {
+                _isLoading = true;
+              });
+            }
+          },
+          onPageFinished: (_) {
+            if (_isLoading && mounted) {
+              setState(() {
+                _isLoading = false;
+              });
+            }
+            _enableFullscreenMode();
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse(kInitialUrl));
   }
 
   @override
@@ -134,9 +155,8 @@ class _WebAppScreenState extends State<WebAppScreen>
   }
 
   Future<bool> _handleBackPressed() async {
-    final controller = await _controller.future;
-    if (await controller.canGoBack()) {
-      await controller.goBack();
+    if (await _controller.canGoBack()) {
+      await _controller.goBack();
       return false;
     }
     return true;
@@ -149,32 +169,7 @@ class _WebAppScreenState extends State<WebAppScreen>
       child: Scaffold(
         body: Stack(
           children: [
-            WebView(
-              initialUrl: kInitialUrl,
-              javascriptMode: JavascriptMode.unrestricted,
-              backgroundColor: Colors.black,
-              gestureNavigationEnabled: true,
-              onWebViewCreated: (controller) {
-                if (!_controller.isCompleted) {
-                  _controller.complete(controller);
-                }
-              },
-              onPageStarted: (_) {
-                if (!_isLoading) {
-                  setState(() {
-                    _isLoading = true;
-                  });
-                }
-              },
-              onPageFinished: (_) {
-                if (_isLoading) {
-                  setState(() {
-                    _isLoading = false;
-                  });
-                }
-                _enableFullscreenMode();
-              },
-            ),
+            WebViewWidget(controller: _controller),
             if (_isLoading)
               const ColoredBox(
                 color: Colors.black,
