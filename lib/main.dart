@@ -8,7 +8,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'web_redirect_stub.dart'
     if (dart.library.html) 'web_redirect_web.dart';
 
-const String kAppTitle = 'Pasti Kawasan Sik';
+const String kAppTitle = 'PASTI SIK';
 const String kInitialUrl = 'https://pastikawasansik.my.id';
 
 Future<void> main() async {

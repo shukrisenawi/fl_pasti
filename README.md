@@ -1,4 +1,4 @@
-# Pasti
+# PASTI SIK
 
 App Flutter ringkas untuk membuka `https://pastikawasansik.my.id` dalam paparan fullscreen menggunakan `WebView`.
 

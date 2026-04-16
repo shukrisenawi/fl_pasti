@@ -2,7 +2,7 @@
     package="com.example.pasti">
     <uses-permission android:name="android.permission.INTERNET" />
    <application
-        android:label="Pasti"
+        android:label="PASTI SIK"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
