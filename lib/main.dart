@@ -136,7 +136,7 @@ class _WebAppScreenState extends State<WebAppScreen> {
     FileSelectorParams params,
   ) async {
     final pickerConfig = _buildPickerConfig(params.acceptTypes);
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       allowMultiple: params.mode == FileSelectorMode.openMultiple,
       type: pickerConfig.type,
       allowedExtensions: pickerConfig.allowedExtensions,
