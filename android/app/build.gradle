@@ -35,6 +35,12 @@ android {
             signingConfig signingConfigs.debug
         }
     }
+
+    packaging {
+        jniLibs {
+            keepDebugSymbols += ["**/*.so"]
+        }
+    }
 }
 
 flutter {
