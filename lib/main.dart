@@ -30,7 +30,7 @@ class PastiApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: kAppTitle,
       theme: ThemeData(
-        scaffoldBackgroundColor: Colors.black,
+        scaffoldBackgroundColor: const Color(0xFF15803D),
       ),
       home: kIsWeb ? const WebRedirectScreen() : const WebAppScreen(),
     );
@@ -68,8 +68,7 @@ class _WebRedirectScreenState extends State<WebRedirectScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: ColoredBox(
-        color: Colors.black,
+      body: SafeArea(
         child: Center(
           child: _launchFailed
               ? Column(
@@ -90,9 +89,7 @@ class _WebRedirectScreenState extends State<WebRedirectScreen> {
                     ),
                   ],
                 )
-              : const CircularProgressIndicator(
-                  color: Colors.white,
-                ),
+              : const _LoadingOverlay(),
         ),
       ),
     );
@@ -118,7 +115,7 @@ class _WebAppScreenState extends State<WebAppScreen>
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.black)
+      ..setBackgroundColor(Colors.transparent)
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) {
@@ -167,21 +164,44 @@ class _WebAppScreenState extends State<WebAppScreen>
     return WillPopScope(
       onWillPop: _handleBackPressed,
       child: Scaffold(
-        body: Stack(
-          children: [
-            WebViewWidget(controller: _controller),
-            if (_isLoading)
-              const ColoredBox(
-                color: Colors.black,
-                child: Center(
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-          ],
+        body: SafeArea(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              WebViewWidget(controller: _controller),
+              if (_isLoading) const _LoadingOverlay(),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _LoadingOverlay extends StatelessWidget {
+  const _LoadingOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Center(
+          child: Opacity(
+            opacity: 0.14,
+            child: Image.asset(
+              'assets/branding/logo-pasti.png',
+              width: 190,
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+        const Center(
+          child: CircularProgressIndicator(
+            color: Colors.white,
+          ),
+        ),
+      ],
     );
   }
 }
