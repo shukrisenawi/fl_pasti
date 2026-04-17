@@ -186,19 +186,23 @@ class _FrameScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final padding = MediaQuery.of(context).padding;
+    final headerHeight = padding.top > 0 ? padding.top : 22.0;
 
     return Scaffold(
       body: Stack(
         children: [
           Positioned(
-            top: padding.top + 6,
+            top: 0,
             left: 12,
             right: 12,
-            child: const _FrameHeader(),
+            child: SizedBox(
+              height: headerHeight,
+              child: const _FrameHeader(),
+            ),
           ),
           Positioned.fill(
             child: Padding(
-              padding: EdgeInsets.only(top: padding.top + 28),
+              padding: EdgeInsets.only(top: headerHeight),
               child: SafeArea(
                 top: false,
                 child: child,
@@ -259,6 +263,7 @@ class _FrameHeaderState extends State<_FrameHeader> {
     );
 
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         const Expanded(
           child: Text(
