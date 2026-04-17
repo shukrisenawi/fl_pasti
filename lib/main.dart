@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'web_redirect_stub.dart'
     if (dart.library.html) 'web_redirect_web.dart';
@@ -123,6 +125,80 @@ class _WebAppScreenState extends State<WebAppScreen> {
         ),
       )
       ..loadRequest(Uri.parse(kInitialUrl));
+
+    final platformController = _controller.platform;
+    if (platformController is AndroidWebViewController) {
+      platformController.setOnShowFileSelector(_handleShowFileSelector);
+    }
+  }
+
+  Future<List<String>> _handleShowFileSelector(
+    FileSelectorParams params,
+  ) async {
+    final pickerConfig = _buildPickerConfig(params.acceptTypes);
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: params.mode == FileSelectorMode.openMultiple,
+      type: pickerConfig.type,
+      allowedExtensions: pickerConfig.allowedExtensions,
+    );
+
+    if (result == null) {
+      return <String>[];
+    }
+
+    return result.paths.whereType<String>().toList();
+  }
+
+  _PickerConfig _buildPickerConfig(List<String> acceptTypes) {
+    final normalizedTypes = acceptTypes
+        .map((type) => type.trim().toLowerCase())
+        .where((type) => type.isNotEmpty)
+        .toList();
+
+    if (normalizedTypes.isEmpty) {
+      return const _PickerConfig(type: FileType.any);
+    }
+
+    final onlyImages = normalizedTypes.every(
+      (type) => type == 'image/*' || type.startsWith('image/'),
+    );
+    if (onlyImages) {
+      return const _PickerConfig(type: FileType.image);
+    }
+
+    final extensions = normalizedTypes
+        .map(_acceptTypeToExtension)
+        .whereType<String>()
+        .toSet()
+        .toList();
+
+    if (extensions.isEmpty) {
+      return const _PickerConfig(type: FileType.any);
+    }
+
+    return _PickerConfig(
+      type: FileType.custom,
+      allowedExtensions: extensions,
+    );
+  }
+
+  String? _acceptTypeToExtension(String acceptType) {
+    if (acceptType.startsWith('.')) {
+      return acceptType.substring(1);
+    }
+
+    switch (acceptType) {
+      case 'image/jpeg':
+        return 'jpg';
+      case 'image/png':
+        return 'png';
+      case 'image/webp':
+        return 'webp';
+      case 'application/pdf':
+        return 'pdf';
+    }
+
+    return null;
   }
 
   Future<bool> _handleBackPressed() async {
@@ -148,6 +224,16 @@ class _WebAppScreenState extends State<WebAppScreen> {
       ),
     );
   }
+}
+
+class _PickerConfig {
+  const _PickerConfig({
+    required this.type,
+    this.allowedExtensions,
+  });
+
+  final FileType type;
+  final List<String>? allowedExtensions;
 }
 
 class _FrameScaffold extends StatelessWidget {
