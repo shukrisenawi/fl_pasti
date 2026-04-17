@@ -146,7 +146,10 @@ class _WebAppScreenState extends State<WebAppScreen> {
       return <String>[];
     }
 
-    return result.paths.whereType<String>().toList();
+    return result.files
+        .map((file) => file.identifier ?? file.path)
+        .whereType<String>()
+        .toList();
   }
 
   _PickerConfig _buildPickerConfig(List<String> acceptTypes) {
