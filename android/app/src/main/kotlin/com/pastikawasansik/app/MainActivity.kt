@@ -1,4 +1,4 @@
-package com.example.pasti
+package com.pastikawasansik.app
 
 import io.flutter.embedding.android.FlutterActivity
 

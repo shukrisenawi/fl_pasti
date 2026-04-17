@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace "com.example.pasti"
+    namespace "com.pastikawasansik.app"
     compileSdk flutter.compileSdkVersion
     ndkVersion flutter.ndkVersion
 
@@ -23,7 +23,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.example.pasti"
+        applicationId "com.pastikawasansik.app"
         minSdk flutter.minSdkVersion
         targetSdk flutter.targetSdkVersion
         versionCode flutter.versionCode
