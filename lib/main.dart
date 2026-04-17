@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'web_redirect_stub.dart'
@@ -8,19 +7,10 @@ import 'web_redirect_stub.dart'
 
 const String kAppTitle = 'PASTI SIK';
 const String kInitialUrl = 'https://pastikawasansik.my.id';
-const String kFrameTitle = 'PASTI KAWASAN SIK';
-const Color kFrameColor = Color(0xFF15803D);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await _enableFullscreenMode();
   runApp(const PastiApp());
-}
-
-Future<void> _enableFullscreenMode() {
-  return SystemChrome.setEnabledSystemUIMode(
-    SystemUiMode.immersiveSticky,
-  );
 }
 
 class PastiApp extends StatelessWidget {
@@ -32,7 +22,7 @@ class PastiApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: kAppTitle,
       theme: ThemeData(
-        scaffoldBackgroundColor: kFrameColor,
+        scaffoldBackgroundColor: Colors.white,
       ),
       home: kIsWeb ? const WebRedirectScreen() : const WebAppScreen(),
     );
@@ -103,15 +93,13 @@ class WebAppScreen extends StatefulWidget {
   State<WebAppScreen> createState() => _WebAppScreenState();
 }
 
-class _WebAppScreenState extends State<WebAppScreen>
-    with WidgetsBindingObserver {
+class _WebAppScreenState extends State<WebAppScreen> {
   late final WebViewController _controller;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -131,24 +119,10 @@ class _WebAppScreenState extends State<WebAppScreen>
                 _isLoading = false;
               });
             }
-            _enableFullscreenMode();
           },
         ),
       )
       ..loadRequest(Uri.parse(kInitialUrl));
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _enableFullscreenMode();
-    }
   }
 
   Future<bool> _handleBackPressed() async {
@@ -185,99 +159,10 @@ class _FrameScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final padding = MediaQuery.of(context).padding;
-    final headerHeight = padding.top > 0 ? padding.top : 22.0;
-
     return Scaffold(
-      body: Stack(
-        children: [
-          Positioned(
-            top: 0,
-            left: 12,
-            right: 12,
-            child: SizedBox(
-              height: headerHeight,
-              child: const _FrameHeader(),
-            ),
-          ),
-          Positioned.fill(
-            child: Padding(
-              padding: EdgeInsets.only(top: headerHeight),
-              child: SafeArea(
-                top: false,
-                child: child,
-              ),
-            ),
-          ),
-        ],
+      body: SafeArea(
+        child: child,
       ),
-    );
-  }
-}
-
-class _FrameHeader extends StatefulWidget {
-  const _FrameHeader();
-
-  @override
-  State<_FrameHeader> createState() => _FrameHeaderState();
-}
-
-class _FrameHeaderState extends State<_FrameHeader> {
-  late DateTime _now;
-
-  @override
-  void initState() {
-    super.initState();
-    _now = DateTime.now();
-    _scheduleNextTick();
-  }
-
-  void _scheduleNextTick() {
-    Future<void>.delayed(const Duration(seconds: 1), () {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _now = DateTime.now();
-      });
-
-      _scheduleNextTick();
-    });
-  }
-
-  String _formatTime(DateTime time) {
-    final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
-    final minute = time.minute.toString().padLeft(2, '0');
-    final period = time.hour >= 12 ? 'PM' : 'AM';
-    return '$hour:$minute $period';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const headerStyle = TextStyle(
-      color: Colors.white,
-      fontSize: 10,
-      fontWeight: FontWeight.w600,
-      letterSpacing: 0.3,
-    );
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        const Expanded(
-          child: Text(
-            kFrameTitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: headerStyle,
-          ),
-        ),
-        Text(
-          _formatTime(_now),
-          style: headerStyle,
-        ),
-      ],
     );
   }
 }
