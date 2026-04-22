@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "751217185259",
+    "project_id": "pasti-c72ac",
+    "storage_bucket": "pasti-c72ac.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:751217185259:android:28bf2734e84eed4b2f09ae",
+        "android_client_info": {
+          "package_name": "com.pastikawasansik.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCq7vATY9QzO8q6h7YD8JJG-mE_m3UmxE0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
