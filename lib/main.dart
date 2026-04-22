@@ -1,38 +1,73 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
-import 'web_redirect_stub.dart'
-    if (dart.library.html) 'web_redirect_web.dart';
+import 'src/app_bridge_message.dart';
+import 'src/fcm_sync_message.dart';
+import 'src/notification_id_mapper.dart';
+import 'web_redirect_stub.dart' if (dart.library.html) 'web_redirect_web.dart';
 
 const String kAppTitle = 'PASTI SIK';
 const String kInitialUrl = 'https://pastikawasansik.my.id';
 
+final ValueNotifier<String?> _pendingNotificationUrl = ValueNotifier(null);
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  await AppNotificationService.initialize();
+  await AppNotificationService.handleRemoteMessage(message);
+}
+
+@pragma('vm:entry-point')
+void _onBackgroundNotificationTap(NotificationResponse response) {
+  final url = AppNotificationService.extractUrlFromPayload(response.payload);
+  if (url != null && url.isNotEmpty) {
+    _pendingNotificationUrl.value = url;
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (!kIsWeb) {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    await AppNotificationService.initialize();
+  }
+
   runApp(const PastiApp());
 }
 
 class PastiApp extends StatelessWidget {
-  const PastiApp({Key? key}) : super(key: key);
+  const PastiApp({super.key, this.homeOverride});
+
+  final Widget? homeOverride;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: kAppTitle,
-      theme: ThemeData(
-        scaffoldBackgroundColor: Colors.white,
-      ),
-      home: kIsWeb ? const WebRedirectScreen() : const WebAppScreen(),
+      theme: ThemeData(scaffoldBackgroundColor: Colors.white),
+      home:
+          homeOverride ??
+          (kIsWeb ? const WebRedirectScreen() : const WebAppScreen()),
     );
   }
 }
 
 class WebRedirectScreen extends StatefulWidget {
-  const WebRedirectScreen({Key? key}) : super(key: key);
+  const WebRedirectScreen({super.key});
 
   @override
   State<WebRedirectScreen> createState() => _WebRedirectScreenState();
@@ -89,7 +124,7 @@ class _WebRedirectScreenState extends State<WebRedirectScreen> {
 }
 
 class WebAppScreen extends StatefulWidget {
-  const WebAppScreen({Key? key}) : super(key: key);
+  const WebAppScreen({super.key});
 
   @override
   State<WebAppScreen> createState() => _WebAppScreenState();
@@ -97,7 +132,13 @@ class WebAppScreen extends StatefulWidget {
 
 class _WebAppScreenState extends State<WebAppScreen> {
   late final WebViewController _controller;
+  StreamSubscription<RemoteMessage>? _foregroundMessageSubscription;
+  StreamSubscription<String>? _tokenRefreshSubscription;
+  AuthenticatedWebUser? _authenticatedUser;
+  String? _fcmToken;
+  String? _lastSyncedRegistration;
   bool _isLoading = true;
+  bool _pageLoaded = false;
 
   @override
   void initState() {
@@ -106,21 +147,32 @@ class _WebAppScreenState extends State<WebAppScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.transparent)
+      ..addJavaScriptChannel(
+        'ReactNativeWebView',
+        onMessageReceived: (JavaScriptMessage message) {
+          _handleBridgeMessage(message.message);
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) {
+            _pageLoaded = false;
             if (!_isLoading && mounted) {
               setState(() {
                 _isLoading = true;
               });
             }
           },
-          onPageFinished: (_) {
+          onPageFinished: (_) async {
+            _pageLoaded = true;
             if (_isLoading && mounted) {
               setState(() {
                 _isLoading = false;
               });
             }
+
+            await _syncRegisteredToken();
+            await _consumePendingNotificationUrl();
           },
         ),
       )
@@ -130,6 +182,153 @@ class _WebAppScreenState extends State<WebAppScreen> {
     if (platformController is AndroidWebViewController) {
       platformController.setOnShowFileSelector(_handleShowFileSelector);
     }
+
+    _pendingNotificationUrl.addListener(_consumePendingNotificationUrl);
+    _initializePushMessaging();
+  }
+
+  Future<void> _initializePushMessaging() async {
+    if (kIsWeb) {
+      return;
+    }
+
+    await AppNotificationService.requestPermissions();
+
+    _foregroundMessageSubscription = FirebaseMessaging.onMessage.listen(
+      AppNotificationService.handleRemoteMessage,
+    );
+
+    _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh
+        .listen((String nextToken) async {
+          final previousToken = _fcmToken;
+          _fcmToken = nextToken;
+          _lastSyncedRegistration = null;
+
+          if (previousToken != null && previousToken != nextToken) {
+            await _unregisterToken(previousToken);
+          }
+
+          await _syncRegisteredToken();
+        });
+
+    _fcmToken = await FirebaseMessaging.instance.getToken();
+    await _syncRegisteredToken();
+  }
+
+  void _handleBridgeMessage(String rawMessage) {
+    AppBridgeMessage? message;
+
+    try {
+      message = AppBridgeMessage.tryParse(rawMessage);
+    } catch (_) {
+      return;
+    }
+
+    if (message == null || message.type != AppBridgeMessageType.authUser) {
+      return;
+    }
+
+    _authenticatedUser = message.user;
+    _lastSyncedRegistration = null;
+
+    if (_authenticatedUser == null) {
+      final token = _fcmToken;
+      if (token != null) {
+        unawaited(_unregisterToken(token));
+      }
+      return;
+    }
+
+    unawaited(_syncRegisteredToken());
+  }
+
+  Future<void> _syncRegisteredToken() async {
+    final token = _fcmToken;
+    final user = _authenticatedUser;
+    if (!_pageLoaded || token == null || token.isEmpty || user == null) {
+      return;
+    }
+
+    final registrationKey = '${user.userId}:$token';
+    if (_lastSyncedRegistration == registrationKey) {
+      return;
+    }
+
+    await _sendTokenMutation(
+      method: 'POST',
+      payload: <String, String>{
+        'fcm_token': token,
+        'device_name': 'PASTI Android WebView',
+        'platform': 'android-webview',
+      },
+    );
+
+    _lastSyncedRegistration = registrationKey;
+  }
+
+  Future<void> _unregisterToken(String token) async {
+    if (!_pageLoaded || token.isEmpty) {
+      return;
+    }
+
+    await _sendTokenMutation(
+      method: 'DELETE',
+      payload: <String, String>{'fcm_token': token},
+    );
+  }
+
+  Future<void> _sendTokenMutation({
+    required String method,
+    required Map<String, String> payload,
+  }) async {
+    final requestBody = jsonEncode(payload);
+    final script =
+        '''
+      (() => {
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '';
+        return fetch('/mobile/fcm-token', {
+          method: ${jsonEncode(method)},
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': csrf,
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: ${jsonEncode(requestBody)}
+        }).then(() => true).catch(() => false);
+      })();
+    ''';
+
+    try {
+      await _controller.runJavaScriptReturningResult(script);
+    } catch (_) {
+      // Abaikan kegagalan sementara; kita akan cuba lagi pada muatan halaman seterusnya.
+    }
+  }
+
+  Future<void> _consumePendingNotificationUrl() async {
+    final pendingUrl = _pendingNotificationUrl.value;
+    if (pendingUrl == null || pendingUrl.isEmpty) {
+      return;
+    }
+
+    _pendingNotificationUrl.value = null;
+
+    try {
+      await _controller.loadRequest(Uri.parse(_resolveUrl(pendingUrl)));
+    } catch (_) {
+      // Kekalkan pengalaman asas walaupun URL notifikasi tidak sah.
+    }
+  }
+
+  String _resolveUrl(String url) {
+    final parsed = Uri.tryParse(url);
+    if (parsed != null && parsed.hasScheme) {
+      return parsed.toString();
+    }
+
+    return Uri.parse(kInitialUrl).resolve(url).toString();
   }
 
   Future<List<String>> _handleShowFileSelector(
@@ -179,10 +378,7 @@ class _WebAppScreenState extends State<WebAppScreen> {
       return const _PickerConfig(type: FileType.any);
     }
 
-    return _PickerConfig(
-      type: FileType.custom,
-      allowedExtensions: extensions,
-    );
+    return _PickerConfig(type: FileType.custom, allowedExtensions: extensions);
   }
 
   String? _acceptTypeToExtension(String acceptType) {
@@ -213,9 +409,27 @@ class _WebAppScreenState extends State<WebAppScreen> {
   }
 
   @override
+  void dispose() {
+    _foregroundMessageSubscription?.cancel();
+    _tokenRefreshSubscription?.cancel();
+    _pendingNotificationUrl.removeListener(_consumePendingNotificationUrl);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: _handleBackPressed,
+    return PopScope<void>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) {
+          return;
+        }
+
+        final shouldPop = await _handleBackPressed();
+        if (shouldPop) {
+          await SystemNavigator.pop();
+        }
+      },
       child: _FrameScaffold(
         child: Stack(
           fit: StackFit.expand,
@@ -229,30 +443,148 @@ class _WebAppScreenState extends State<WebAppScreen> {
   }
 }
 
+class AppNotificationService {
+  static const AndroidNotificationChannel _channel = AndroidNotificationChannel(
+    'pasti_notifications',
+    'Notifikasi PASTI',
+    description: 'Notifikasi utama untuk aplikasi PASTI.',
+    importance: Importance.high,
+  );
+
+  static final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
+  static bool _initialized = false;
+
+  static Future<void> initialize() async {
+    if (_initialized) {
+      return;
+    }
+
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+    const iosSettings = DarwinInitializationSettings();
+
+    await _plugin.initialize(
+      const InitializationSettings(android: androidSettings, iOS: iosSettings),
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        final url = extractUrlFromPayload(response.payload);
+        if (url != null && url.isNotEmpty) {
+          _pendingNotificationUrl.value = url;
+        }
+      },
+      onDidReceiveBackgroundNotificationResponse: _onBackgroundNotificationTap,
+    );
+
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    await androidPlugin?.createNotificationChannel(_channel);
+
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    final launchUrl = extractUrlFromPayload(
+      launchDetails?.notificationResponse?.payload,
+    );
+    if (launchUrl != null && launchUrl.isNotEmpty) {
+      _pendingNotificationUrl.value = launchUrl;
+    }
+
+    _initialized = true;
+  }
+
+  static Future<void> requestPermissions() async {
+    await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    await androidPlugin?.requestNotificationsPermission();
+  }
+
+  static Future<void> handleRemoteMessage(RemoteMessage message) async {
+    final syncMessage = FcmSyncMessage.fromData(message.data);
+    if (syncMessage == null) {
+      return;
+    }
+
+    await initialize();
+
+    switch (syncMessage.action) {
+      case FcmSyncAction.create:
+        if (syncMessage.title.isEmpty && syncMessage.body.isEmpty) {
+          return;
+        }
+
+        await _plugin.show(
+          NotificationIdMapper.fromNotificationId(syncMessage.notificationId),
+          syncMessage.title,
+          syncMessage.body,
+          NotificationDetails(
+            android: AndroidNotificationDetails(
+              _channel.id,
+              _channel.name,
+              channelDescription: _channel.description,
+              importance: Importance.high,
+              priority: Priority.high,
+            ),
+            iOS: const DarwinNotificationDetails(),
+          ),
+          payload: jsonEncode({
+            'url': syncMessage.url,
+            'notification_id': syncMessage.notificationId,
+          }),
+        );
+        return;
+      case FcmSyncAction.read:
+      case FcmSyncAction.remove:
+        await _plugin.cancel(
+          NotificationIdMapper.fromNotificationId(syncMessage.notificationId),
+        );
+        return;
+      case FcmSyncAction.unknown:
+        return;
+    }
+  }
+
+  static String? extractUrlFromPayload(String? payload) {
+    if (payload == null || payload.isEmpty) {
+      return null;
+    }
+
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map<String, dynamic>) {
+        return decoded['url']?.toString();
+      }
+    } catch (_) {
+      return null;
+    }
+
+    return null;
+  }
+}
+
 class _PickerConfig {
-  const _PickerConfig({
-    required this.type,
-    this.allowedExtensions,
-  });
+  const _PickerConfig({required this.type, this.allowedExtensions});
 
   final FileType type;
   final List<String>? allowedExtensions;
 }
 
 class _FrameScaffold extends StatelessWidget {
-  const _FrameScaffold({
-    required this.child,
-  });
+  const _FrameScaffold({required this.child});
 
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: child,
-      ),
-    );
+    return Scaffold(body: SafeArea(child: child));
   }
 }
 
@@ -274,11 +606,7 @@ class _LoadingOverlay extends StatelessWidget {
             ),
           ),
         ),
-        const Center(
-          child: CircularProgressIndicator(
-            color: Colors.white,
-          ),
-        ),
+        const Center(child: CircularProgressIndicator(color: Colors.white)),
       ],
     );
   }
